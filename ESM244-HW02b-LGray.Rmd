@@ -1,0 +1,216 @@
+---
+title: "ESM 244 HW02"
+author: "Laura Gray"
+date: "February 25, 2019"
+output: html_document
+---
+###0. Load Packages
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(boot)
+
+```
+
+###1. Cetaceans in Captivity
+
+```{r}
+captive_cetacean <- read_csv("~/github/ESM244-HW02/captive_cetacean.csv")
+
+cc_yearstatus <- captive_cetacean %>% 
+  filter(acquisition == "Born" | acquisition == "Rescue" | acquisition == "Capture") %>%
+  filter(birthYear != "NA") %>% 
+  group_by(birthYear, acquisition, status) %>% 
+  tally() 
+
+cc_yearstatus$birthYear <- as.numeric(cc_yearstatus$birthYear)
+
+ggplot(cc_yearstatus, aes(x=birthYear, y=n, fill = acquisition)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values=c("deepskyblue3", "chocolate2", "cyan2"), name = "Acquisition") +
+  ylab("Number of Individual Cetaceans \n") +
+  xlab("\n Birth Year") +
+  #ggtitle("Trends in the Acquisition of Cetaceans in Capivity (USA, 1938-2017) \n") +
+  scale_x_continuous(limits = c(1938,2017), breaks=seq(1940,2010,10)) +
+  labs(title="Trends in the Aquisition of Cetaceans in Capivity", subtitle="United States, 1938-2017", caption="\n Source: US National Marine Mammal Inventory, CetaBase. Includes 37 species of whales and dolphins.") +
+  theme_classic()
+```
+
+###2. Fish Catch
+
+#### **A. Exploratory Graph of wild-catch and aquaculture data from FAO**
+
+```{r}
+
+fish_catch <- read_csv("~/github/ESM244-HW02/fish_catch.csv")
+
+fish <- fish_catch %>% 
+  rename(Year = `World Wild Fish Catch and Farmed Fish Production, 1950-2012`, Wild = X2, Farmed = X3, Total = X4) %>% 
+  filter(Year != "NA", Year != "Year", Wild != "NA", Farmed != "NA", Total != "NA")
+
+fish$Year <- as.numeric(fish$Year)
+fish$Total <- as.numeric(fish$Total)
+fish$Wild <- as.numeric(fish$Wild)
+fish$Farmed <- as.numeric(fish$Farmed)
+
+ggplot(fish, aes(x=Year, y=Total)) +
+  geom_area(fill = "goldenrod2") +
+  geom_area(aes(x=Year, y=Wild), fill = "darkslategray3") +
+  geom_line(color = "goldenrod4") +
+  geom_line(aes(x=Year, y=Wild), color = "darkslategrey") +
+  ylab("Million Tons of Fish \n") +
+  xlab("\n Year") +
+  labs(title="Global wild fish catch and aquaculture production (1950-2012) \n", 
+       caption="\n Source: U.N. Food and Agriculture Organization (FAO), Earth Policy Institute. Fish data include fishes, \n crustaceans, mollusks, and various other aquatic animals. Crocodiles, alligators, and aquatic mammals are excluded. \n Figures for 2011 are estimates; figures for 2012 are projections.") +
+  theme(plot.caption = element_text(hjust = 0.5)) +
+  annotate("text", x = c(2005,2005), y = c(60,110), label = c("Wild", "Farmed")) +
+  scale_x_continuous(breaks=seq(1940,2010,10)) +
+  theme_classic()
+
+```
+
+#### **B. Exploration of wild fish catch and application of nonlinear least squares.**
+
+Summary:
+
+- The trend in wild catch is increasing until 1988, and then levels off until 2012. **Logistic growth** doesn't look like a great fit, here, but we're going to go with it!
+- **Parameter estimation**: K=90, B=8, r=0.025 (see below)
+
+```{r}
+
+wildfish <- fish %>%
+  mutate(year = Year -1950) %>% 
+  select(year, Wild)
+ggplot(wildfish, aes(x=year, y=Wild)) +
+  geom_point() +
+  theme_classic()
+
+# N = A/(1 + Be^9-rt))
+# B = (K-No)/No
+# estimate for carrying capacity: 90
+# if No is 10, B is 8
+
+# to estimate r...
+# since [y=e^(rt)], then [ln(y)=rt] a linear relationship exists!
+
+#log transformed. 
+ggplot(wildfish, aes(x=year, y=log(Wild))) +
+  geom_point() +
+  theme_classic()
+
+wild_model <- lm(log(Wild) ~ year, data = wildfish)
+#plot(wild_model) #mehhh not great but oh well
+wild_model
+
+# result: r ~ 0.025
+
+wild_fit <- nls(Wild ~ A/(1 + B*exp(-r*year)),
+                start = list(A = 90, B = 8, r = 0.025), 
+                data = wildfish,
+                trace = TRUE)
+wild_fit
+
+# store the model coefficients (call the coefficients from the model itself, don't type values)
+A <- coef(wild_fit)[1]
+B <- coef(wild_fit)[2]
+r <- coef(wild_fit)[3]
+
+# create a new sequence of time values (time_seq)
+time_seq <- seq(0,63, length = 100) #100 total observations over 63 years
+
+# plug this new sequence into my model with the parameters A, B, and r that we found
+wild_predict <- A/(1+B*exp(-r*time_seq))
+
+# bind that together with my time sequence data
+wildpred_df <- data.frame(time_seq, wild_predict)
+```
+
+#### **c. Finalized Graph with Model Output**
+
+```{r}
+ggplot(wildfish, aes(x=year, y=Wild)) +
+  geom_point(color = "darkblue", size = 1, alpha = 0.9) + 
+  geom_line(data = wildpred_df, aes(x=time_seq, y=wild_predict), color = "darkgrey", alpha = 0.8, size = 1) +
+  ylab("Million Tons of Fish \n") +
+  xlab("\n Years since 1950") +
+  labs(title="Global Wild Fish Catch (1950-2012) \n", 
+       caption="\n Logistic growth model to fit data on global fish catch, where K=100.28, B=4.32, r=0.0699. \n Source: U.N. Food and Agriculture Organization (FAO), Earth Policy Institute. Fish data include fishes, crustaceans, \n mollusks, and various other aquatic animals. Crocodiles, alligators, and aquatic mammals are excluded. \n Figures for 2011 are estimates; figures for 2012 are projections.") +
+  geom_hline(yintercept=100.3, linetype="dashed", color = "darkred") +
+  annotate("text", x = c(3), y = c(95), label = c("K = 100.28"), color = "darkred") +
+   annotate("text", x = c(50), y = c(60), label = c("Number of Wild-Caught Fish = \n 100.28 / (1 + 4.32 e^(-0.06989*years))"), color = "darkblue") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(plot.caption = element_text(hjust = 0))
+```
+
+## 3. Bootstrapped Confidence Interval for Proportions 
+
+*22 out of 36 surveyed UCSB community members (61%) identifying as nonbinary/genderqueer responded that they had personally experienced "exclusionary, offensive, hostile or intimidating conduct" (compared to 26% and 19% for those identifying as women and men, respectively).*
+
+```{r}
+
+#recreate data in a vector, where 22=hostile(1), 14=none(0)
+nonbinary_response <- c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+                        0,0,0,0,0,0,0,0,0,0,0,0,0,0)
+
+#create a function to calculate the proportion(hostile) in each bootstrap sample
+proportion_fun <- function(x,i) {mean(x[i])}
+
+#bootstrap
+bs_10000 <- boot(nonbinary_response, proportion_fun, R = 10000)
+
+#plot to see what's happened
+ggplot() + 
+  aes(bs_10000$t) + #all the mean values
+  geom_histogram(bins=25) +
+  theme_classic()
+
+#Calculate confidence interval using boot::boot.ci()
+boot.ci(bs_10000, conf = 0.95)
+```
+
+#### **Conclusion**: from 10,000 bootstrap samples, the 95% confidence interval for the proportion of students identifying as nonbinary/genderqueer who experience "exclusionary, offensive, hostile or intimidating conduct" is (0.4517, 0.7696). This result is based on an original survey sample of 36 students at UCSB, 22 of which (0.61) had experienced this conduct.
+
+
+## 4. RStudio Conference Talks
+
+
+####*Data science as a team sport - Angela Bassa*
+
+https://resources.rstudio.com/rstudio-conf-2019/data-science-as-a-team-sport
+
+- Conflicts of character versus conflicts of understanding or purpose in the workplace
+- Gathering folks with a spread in specailizations of interests, establishing shareable processes, and establishing trust (especially through diversity and inclusion!) are important aspects of working in teams of data scientists
+-'junior' scientists are less biased in their approaches and make less assumptions, and can therefore often contribute novel thinking that more experienced scientists might not be able to see (i.e. *the luxury of ignorance*)
+- Question for Angela: You claim resolutely in the last few minutes of your talk that teams don't scale, and that it's a matter of trust. I'd be curious to hear what the limits to this are, especially in the age of big data collaborations. What should a team look like?
+- **Extra, encouraging notes and reminders to self:** excellence isn't binary! it can vary, day by day, project by project; give eachother pschological saftey; conflicts of understanding or purpose in the workplace are different than conflicts of character
+
+####*Getting it right: Writing reliable and maintainable R code - Amanda Gadrow*
+
+https://resources.rstudio.com/rstudio-conf-2019/getting-it-right-writing-reliable-and-maintainable-r-code
+
+- Characteristics of good code include reliability, reproducibility, felxibility, longevity, scalability
+- You can measure the quality of your code using tests (which are also coded!), e.g. through package "testthat" in combination with a workflow management package called "usethis", e.g. with **"shinytest" package**
+- Question for Amanada: In your experience, how *often* do your projects/code require testing and maintenance? 
+- **Future note to self**: see *R packages* book by Hadley Wickham, and *Happy Git and Gihub for the useR* by Jenny Bryan
+
+####*R4DS online learning community Improvements to self-taught data science & the critical need for diversity, equity, and inclusion - Jesse Mostipak, @kierisi*
+
+https://resources.rstudio.com/rstudio-conf-2019/r4ds-online-learning-community-improvements-to-self-taught-data-science-and-the-critical-need-for-diversity-equity-and-inclusion-in-data-science-education
+
+- You can get started with data science anywhere! You don't have to be called a "data scientist" in your job title
+- You can be a mentor *and* a mentee in a learning community
+- Question for Jesse: How have you seen (or heard about) the effects of this community movement materialize in educational and/or working spaces with data scientists?
+- **See Resources**: www.rfordatasci.com | @R4DScommunity
+
+
+*Another talk for later?*
+*The lazy and easily distracted report writer: Using rmarkdown and parameterised reports - Mike K Smith*
+https://resources.rstudio.com/rstudio-conf-2019/the-lazy-and-easily-distracted-report-writer-using-rmarkdown-and-parameterised-reports
+
+
+
+
